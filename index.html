@@ -1,0 +1,910 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel Split View - Arquitectura Monolítica</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- SheetJS -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        /* --- Core Layout --- */
+        body, html { height: 100%; margin: 0; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+
+        /* --- Toolbar (Barra de Tareas Lateral) --- */
+        #task-bar {
+            width: 18px;
+            background-color: #1e293b;
+            transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            z-index: 100;
+            border-right: 1px solid #334155;
+            flex-shrink: 0;
+        }
+        #task-bar:hover {
+            width: 200px;
+        }
+        
+        .task-btn {
+            display: flex;
+            align-items: center;
+            padding: 14px 0;
+            color: #94a3b8;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.2s;
+            justify-content: center;
+            gap: 0;
+        }
+        
+        #task-bar:hover .task-btn {
+            padding: 12px 14px;
+            justify-content: flex-start;
+            background-color: transparent;
+            gap: 12px;
+        }
+        
+        .task-btn:hover {
+            background-color: #334155 !important;
+            color: #f8fafc;
+        }
+        
+        .task-icon-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-shrink: 0;
+            width: 18px;
+            transition: all 0.3s;
+        }
+        #task-bar:hover .task-icon-container {
+            width: 24px;
+        }
+
+        #task-bar svg {
+            width: 10px; 
+            height: 10px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            stroke-width: 3px;
+        }
+        #task-bar:hover svg {
+            width: 20px; 
+            height: 20px;
+            stroke-width: 2px;
+        }
+        
+        .task-btn span {
+            opacity: 0;
+            width: 0;
+            overflow: hidden;
+            transform: translateX(-10px);
+            transition: all 0.2s ease-out;
+            transition-delay: 0.1s;
+        }
+        #task-bar:hover .task-btn span {
+            opacity: 1;
+            width: auto;
+            transform: translateX(0);
+        }
+
+        /* --- Status Indicator --- */
+        .status-indicator {
+            margin-top: auto;
+            padding: 15px 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #64748b;
+            gap: 5px;
+            border-top: 1px solid #334155;
+            transition: all 0.3s;
+        }
+        #task-bar:hover .status-indicator {
+            padding: 15px;
+            flex-direction: row;
+            justify-content: flex-start;
+            gap: 12px;
+        }
+        
+        .status-text {
+            font-size: 11px;
+            opacity: 0;
+            width: 0;
+            overflow: hidden;
+            transition: opacity 0.2s;
+            white-space: nowrap;
+        }
+        #task-bar:hover .status-text {
+            opacity: 1;
+            width: auto;
+        }
+        
+        .logo-container {
+            padding: 10px 0;
+            margin-bottom: 4px;
+            display: flex;
+            justify-content: center;
+            border-bottom: 1px solid #334155;
+        }
+        #task-bar:hover .logo-container {
+             padding: 14px;
+             justify-content: flex-start;
+        }
+
+        /* --- Splitter --- */
+        .resizer { width: 6px; cursor: col-resize; background-color: #e5e7eb; transition: background-color 0.2s; z-index: 50; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        .resizer:hover, .resizer.resizing { background-color: #3b82f6; }
+        .resizer::after { content: ""; width: 2px; height: 20px; background-color: #9ca3af; border-radius: 1px; }
+        .noselect { user-select: none; -webkit-user-select: none; pointer-events: none; }
+
+        /* --- Excel Grid --- */
+        .excel-grid-container { overflow: auto; height: calc(100% - 40px); background: #fff; position: relative; }
+        table.excel-table { border-collapse: separate; border-spacing: 0; min-width: 100%; font-size: 13px; color: #333; cursor: default; }
+        table.excel-table td, table.excel-table th { border-right: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0; padding: 4px 8px; white-space: nowrap; height: 24px; box-sizing: border-box; }
+        table.excel-table th { background-color: #f8f9fa; font-weight: 600; color: #5f6368; text-align: center; position: sticky; top: 0; z-index: 10; border-bottom: 2px solid #d1d5db; }
+        table.excel-table tr td:first-child { background-color: #f8f9fa; font-weight: 600; color: #5f6368; text-align: center; border-right: 2px solid #d1d5db; position: sticky; left: 0; z-index: 11; width: 50px; min-width: 50px; }
+        table.excel-table th:first-child { left: 0; z-index: 20; border-right: 2px solid #d1d5db; }
+        table.excel-table tbody tr:hover td { background-color: #f1f5f9; }
+        table.excel-table tbody tr.selected-row td { background-color: #bbf7d0 !important; }
+
+        /* Scrollbars */
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
+
+        /* --- Tabs --- */
+        .sheet-tabs { height: 40px; background: #f1f5f9; border-top: 1px solid #e2e8f0; display: flex; align-items: center; padding: 0 10px; overflow-x: auto; gap: 2px; }
+        .sheet-tab { padding: 6px 16px; cursor: pointer; font-size: 13px; border-radius: 4px 4px 0 0; color: #475569; background: transparent; transition: all 0.2s; border-bottom: 3px solid transparent; }
+        .sheet-tab:hover { background: #e2e8f0; }
+        .sheet-tab.active { background: #fff; color: #16a34a; font-weight: bold; border-bottom: 3px solid #16a34a; box-shadow: 0 -2px 5px rgba(0,0,0,0.05); }
+
+        .chrome-tab-bar { background-color: #dfe1e5; padding: 8px 8px 0 8px; display: flex; align-items: center; gap: 4px; overflow-x: auto; height: 44px; }
+        .chrome-tab { position: relative; padding: 8px 34px 8px 16px; background-color: transparent; border-radius: 8px 8px 0 0; font-size: 13px; color: #5f6368; cursor: pointer; transition: background 0.2s; max-width: 200px; min-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; user-select: none; height: 100%; }
+        .chrome-tab:hover { background-color: #eeeeee; }
+        .chrome-tab.active { background-color: #ffffff; color: #202124; font-weight: 500; box-shadow: 0 -1px 4px rgba(0,0,0,0.1); }
+        .chrome-tab:not(.active):not(:hover)::after { content: ""; position: absolute; right: 0; top: 25%; height: 50%; width: 1px; background-color: #9ca3af; }
+        .chrome-tab-close { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; opacity: 0; transition: opacity 0.2s, background 0.2s; }
+        .chrome-tab:hover .chrome-tab-close { opacity: 1; }
+        .chrome-tab-close:hover { background-color: #e8eaed; color: #000; }
+        .add-tab-btn { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; color: #5f6368; transition: background 0.2s; flex-shrink: 0; }
+        .add-tab-btn:hover { background-color: rgba(0,0,0,0.08); color: #202124; }
+
+        /* CRITICAL: Editable Input Styling */
+        .tab-input-edit {
+            user-select: text !important;
+            -webkit-user-select: text !important;
+            cursor: text !important;
+            pointer-events: auto !important;
+        }
+
+        .tab-content { display: none; width: 100%; height: 100%; animation: fadeIn 0.2s ease-out; }
+        .tab-content.active { display: flex; flex-direction: column; }
+        @keyframes fadeIn { from { opacity: 0.95; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .editor-container { position: relative; width: 100%; height: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 14px; line-height: 1.5; }
+        .editor-backdrop { position: absolute; top: 0; left: 0; width: 100%; height: 100%; padding: 16px; pointer-events: none; overflow: hidden; white-space: pre-wrap; word-wrap: break-word; color: #4b5563; }
+        .editor-textarea { position: absolute; top: 0; left: 0; width: 100%; height: 100%; padding: 16px; border: none; outline: none; resize: none; background: transparent; color: transparent; caret-color: #1f2937; white-space: pre-wrap; word-wrap: break-word; z-index: 10; }
+        .editor-textarea::placeholder { color: #9ca3af; }
+        .highlight-mark { background-color: #fef08a; border-radius: 2px; color: #1f2937; box-shadow: 0 0 0 1px #fde047; }
+
+        /* Modal Styles */
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+        .modal-overlay.open { opacity: 1; pointer-events: auto; }
+        .modal-box { background: white; border-radius: 8px; padding: 24px; width: 400px; max-width: 90%; box-shadow: 0 10px 25px rgba(0,0,0,0.1); transform: translateY(10px); transition: transform 0.2s; }
+        .modal-overlay.open .modal-box { transform: translateY(0); }
+    </style>
+</head>
+<body class="bg-gray-100 flex flex-row overflow-hidden h-full">
+
+    <!-- TASK BAR -->
+    <div id="task-bar">
+        <div class="logo-container text-blue-400">
+            <i data-lucide="layers" class="w-6 h-6"></i>
+        </div>
+        <div class="task-btn" onclick="openNewProjectModal()">
+            <div class="task-icon-container"><i data-lucide="file-plus"></i></div>
+            <span class="text-sm font-medium">Nuevo Proyecto</span>
+        </div>
+        <div class="task-btn" onclick="openSaveModal()">
+            <div class="task-icon-container"><i data-lucide="save"></i></div>
+            <span class="text-sm font-medium">Guardar Proyecto</span>
+        </div>
+        <div class="task-btn" onclick="openLoadModal()">
+            <div class="task-icon-container"><i data-lucide="folder-open"></i></div>
+            <span class="text-sm font-medium">Cargar Proyecto</span>
+        </div>
+        <div id="status-bar" class="status-indicator">
+            <div id="status-icon" class="task-icon-container"><i data-lucide="check" class="text-blue-400"></i></div>
+            <span id="status-text" class="status-text">Listo</span>
+        </div>
+    </div>
+
+    <!-- MAIN APP CONTAINER -->
+    <div id="app-container" class="flex flex-row flex-1 w-full h-full overflow-hidden relative">
+        <!-- PANEL IZQUIERDO -->
+        <div id="left-panel" class="bg-slate-50 flex flex-col min-w-[300px] overflow-hidden" style="width: 50%;">
+            <nav class="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4 shadow-sm z-20">
+                <div class="flex items-center gap-2">
+                    <div class="bg-green-600 p-1.5 rounded text-white"><i data-lucide="sheet" class="w-5 h-5"></i></div>
+                    <span class="font-bold text-gray-700 text-sm tracking-wide">VISOR EXCEL</span>
+                </div>
+                <div class="flex items-center gap-3">
+                    <span id="file-name" class="text-xs text-gray-500 font-medium hidden md:block"></span>
+                    <label for="excel-upload" class="cursor-pointer group relative overflow-hidden bg-green-600 hover:bg-green-700 text-white text-sm font-medium py-2 px-4 rounded shadow transition-all flex items-center gap-2">
+                        <i data-lucide="upload-cloud" class="w-4 h-4"></i>
+                        <span>Importar Excel</span>
+                        <input type="file" id="excel-upload" accept=".xlsx, .xls, .csv" class="hidden" />
+                    </label>
+                </div>
+            </nav>
+            <div class="flex-1 relative flex flex-col overflow-hidden">
+                <div id="empty-state" class="absolute inset-0 flex flex-col items-center justify-center text-gray-400 bg-slate-50 z-10">
+                    <i data-lucide="file-spreadsheet" class="w-16 h-16 mb-4 text-green-200"></i>
+                    <p class="text-gray-500 font-medium">No hay archivo cargado</p>
+                    <p class="text-xs mt-1">Sube un archivo .xlsx para visualizar</p>
+                </div>
+                <div id="grid-wrapper" class="excel-grid-container hidden"></div>
+                <div id="sheet-tabs" class="sheet-tabs hidden"></div>
+            </div>
+        </div>
+        <div id="resizer" class="resizer" title="Arrastrar para redimensionar"></div>
+        <!-- PANEL DERECHO -->
+        <div id="right-panel" class="bg-white flex flex-col flex-1 min-w-[200px] border-l border-gray-200 overflow-hidden">
+            <div class="chrome-tab-bar select-none" id="chrome-tabs-container">
+                <div class="add-tab-btn" id="add-tab-btn" title="Nueva pestaña"><i data-lucide="plus" class="w-5 h-5"></i></div>
+            </div>
+            <div id="tabs-content-area" class="flex-1 bg-white relative overflow-hidden">
+                <div id="no-tabs-state" class="absolute inset-0 flex flex-col items-center justify-center text-gray-300">
+                    <i data-lucide="mouse-pointer-click" class="w-12 h-12 mb-2 opacity-50"></i>
+                    <p class="text-sm">Haz clic en (+) para crear una pestaña</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODALS -->
+    <div id="modal-new" class="modal-overlay">
+        <div class="modal-box">
+            <h3 class="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><i data-lucide="file-plus" class="w-5 h-5 text-blue-500"></i> Nuevo Proyecto</h3>
+            <p class="text-sm text-gray-600 mb-6">¿Crear nuevo proyecto?<br><br><span class="text-xs bg-yellow-50 text-yellow-700 px-2 py-1 rounded border border-yellow-100">El actual se guardará automáticamente.</span></p>
+            <div class="flex justify-end gap-3">
+                <button onclick="closeModals()" class="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">Cancelar</button>
+                <button onclick="createNewProject()" class="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 shadow-sm">Crear Nuevo</button>
+            </div>
+        </div>
+    </div>
+    <div id="modal-save" class="modal-overlay">
+        <div class="modal-box">
+            <h3 class="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><i data-lucide="save" class="w-5 h-5"></i> Guardar Proyecto</h3>
+            <p class="text-sm text-gray-600 mb-6">Destino:</p>
+            <div class="flex flex-col gap-3">
+                <button onclick="saveProjectToBrowser(this)" class="flex items-center gap-3 p-3 border rounded-lg hover:bg-blue-50 hover:border-blue-200 transition-colors text-left group">
+                    <div class="bg-blue-100 p-2 rounded text-blue-600 group-hover:bg-blue-200 icon-container"><i data-lucide="globe" class="w-5 h-5"></i></div>
+                    <div><div class="text-sm font-semibold text-gray-700">Navegador (AutoSave)</div></div>
+                </button>
+                <button onclick="saveProjectToPC()" class="flex items-center gap-3 p-3 border rounded-lg hover:bg-green-50 hover:border-green-200 transition-colors text-left group">
+                    <div class="bg-green-100 p-2 rounded text-green-600 group-hover:bg-green-200"><i data-lucide="download" class="w-5 h-5"></i></div>
+                    <div><div class="text-sm font-semibold text-gray-700">Mi PC (Descargar)</div></div>
+                </button>
+            </div>
+            <div class="mt-6 flex justify-end"><button onclick="closeModals()" class="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">Cancelar</button></div>
+        </div>
+    </div>
+    <div id="modal-load" class="modal-overlay">
+        <div class="modal-box">
+            <h3 class="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><i data-lucide="folder-open" class="w-5 h-5"></i> Cargar Proyecto</h3>
+            <p class="text-sm text-gray-600 mb-6">Origen:</p>
+            <div class="flex flex-col gap-3">
+                <button onclick="loadProjectFromBrowser()" class="flex items-center gap-3 p-3 border rounded-lg hover:bg-blue-50 hover:border-blue-200 transition-colors text-left group">
+                    <div class="bg-blue-100 p-2 rounded text-blue-600 group-hover:bg-blue-200"><i data-lucide="history" class="w-5 h-5"></i></div>
+                    <div><div class="text-sm font-semibold text-gray-700">Continuar Reciente</div><div class="text-xs text-gray-500" id="browser-save-info">Buscando...</div></div>
+                </button>
+                <label class="flex items-center gap-3 p-3 border rounded-lg hover:bg-purple-50 hover:border-purple-200 transition-colors text-left group cursor-pointer">
+                    <div class="bg-purple-100 p-2 rounded text-purple-600 group-hover:bg-purple-200"><i data-lucide="upload" class="w-5 h-5"></i></div>
+                    <div><div class="text-sm font-semibold text-gray-700">Subir Archivo .slpwtv</div></div>
+                    <input type="file" accept=".slpwtv" class="hidden" onchange="loadProjectFromPC(this)">
+                </label>
+            </div>
+            <div class="mt-6 flex justify-end"><button onclick="closeModals()" class="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">Cancelar</button></div>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        /* --- GLOBAL STATE & STORAGE CONFIG --- */
+        let globalSelectedData = null; 
+        let globalHeaders = [];        
+        let projectData = { id: 'default', tabs: [], excelBase64: null, excelFileName: null };
+        let autoSaveTimer = null;
+        const STORAGE_KEY = 'autosave_slpwtv_project';
+
+        /* --- SINGLE SOURCE OF TRUTH HELPERS --- */
+        function findTab(id) {
+            return projectData.tabs.find(t => t.id === id);
+        }
+
+        function updateTab(id, changes) {
+            const tab = findTab(id);
+            if (!tab) return;
+            Object.assign(tab, changes);
+            triggerAutoSave();
+        }
+
+        /* --- SPLITTER LOGIC --- */
+        const resizer = document.getElementById('resizer');
+        const leftPanel = document.getElementById('left-panel');
+        const container = document.getElementById('app-container');
+        let isResizing = false;
+        resizer.addEventListener('mousedown', () => { isResizing = true; document.body.style.cursor = 'col-resize'; document.body.classList.add('noselect'); });
+        document.addEventListener('mousemove', (e) => { if (isResizing) leftPanel.style.width = `${((e.clientX - container.getBoundingClientRect().left) / container.getBoundingClientRect().width) * 100}%`; });
+        document.addEventListener('mouseup', () => { isResizing = false; document.body.style.cursor = 'default'; document.body.classList.remove('noselect'); });
+
+        /* --- EXCEL LOGIC --- */
+        const fileInput = document.getElementById('excel-upload');
+        let currentWorkbook = null;
+        let currentSheetJson = []; 
+
+        fileInput.addEventListener('change', (e) => handleExcelFile(e.target.files[0]));
+
+        function handleExcelFile(file) {
+            if (!file) return;
+            projectData.excelFileName = file.name;
+            document.getElementById('file-name').textContent = file.name;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const data = new Uint8Array(e.target.result);
+                let binary = '';
+                const len = data.byteLength;
+                for (let i = 0; i < len; i++) binary += String.fromCharCode(data[i]);
+                projectData.excelBase64 = btoa(binary);
+                processExcelData(data);
+                triggerAutoSave();
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function processExcelData(data) {
+            try {
+                currentWorkbook = XLSX.read(data, { type: 'array', cellStyles: true });
+                document.getElementById('empty-state').classList.add('hidden');
+                document.getElementById('grid-wrapper').classList.remove('hidden');
+                document.getElementById('sheet-tabs').classList.remove('hidden');
+                renderSheetTabs(currentWorkbook.SheetNames);
+                renderSheet(currentWorkbook.SheetNames[0]);
+            } catch (error) { console.error(error); }
+        }
+
+        /* --- TABS & EDITING LOGIC --- */
+        const tabsContainerEl = document.getElementById('chrome-tabs-container');
+        const addTabBtn = document.getElementById('add-tab-btn');
+        const contentArea = document.getElementById('tabs-content-area');
+        let tabCounter = 1;
+
+        addTabBtn.onclick = () => createNewTab();
+
+        function createNewTab(restoredData = null) {
+            const tabId = restoredData ? restoredData.id : `tab-${Date.now()}`;
+            const tabTitle = restoredData ? restoredData.title : `Pestaña ${tabCounter++}`;
+            const initialContent = restoredData ? restoredData.content : "";
+
+            // Single Source: Only push to data if it's NEW
+            if (!restoredData) {
+                projectData.tabs.push({ id: tabId, title: tabTitle, content: initialContent });
+                triggerAutoSave();
+            }
+
+            const tabEl = document.createElement('div');
+            tabEl.className = 'chrome-tab';
+            tabEl.dataset.id = tabId;
+            tabEl.innerHTML = `<span class="flex-1 truncate pointer-events-auto">${tabTitle}</span><div class="chrome-tab-close"><i data-lucide="x" class="w-3 h-3"></i></div>`;
+            
+            const span = tabEl.querySelector('span');
+            
+            // --- EDIT TAB NAME ---
+            span.ondblclick = (e) => {
+                e.stopPropagation();
+                const inp = document.createElement('input');
+                const currentData = findTab(tabId); // Read from Truth
+                inp.value = currentData.title;
+                inp.className = "tab-input-edit bg-white text-gray-900 text-xs px-2 py-1 rounded flex-1 min-w-0 outline-none border border-blue-300";
+                
+                // Stop prop on input to prevent dragging/selection issues
+                inp.onclick = (e) => e.stopPropagation();
+                inp.onmousedown = (e) => e.stopPropagation();
+                inp.ondblclick = (e) => e.stopPropagation();
+                
+                const save = () => { 
+                    const newTitle = inp.value.trim() || currentData.title;
+                    span.textContent = newTitle;
+                    
+                    const h3 = document.querySelector(`#content-${tabId} h3`);
+                    if(h3) h3.textContent = newTitle;
+                    
+                    inp.replaceWith(span); 
+                    updateTab(tabId, { title: newTitle }); // Update Truth & Save
+                };
+                inp.onblur = save; 
+                inp.onkeydown = e => e.key === 'Enter' && save();
+                
+                span.replaceWith(inp); 
+                inp.focus();
+                inp.select(); 
+            };
+
+            // Close Tab
+            tabEl.querySelector('.chrome-tab-close').onclick = (e) => {
+                e.stopPropagation();
+                projectData.tabs = projectData.tabs.filter(t => t.id !== tabId); // Update Truth
+                tabEl.remove(); 
+                const c = document.getElementById(`content-${tabId}`);
+                if(c) c.remove();
+                triggerAutoSave();
+            };
+            
+            tabEl.onclick = (e) => { if(e.target.tagName !== 'INPUT') activateTab(tabId); };
+            
+            const currentAddBtn = document.getElementById('add-tab-btn');
+            tabsContainerEl.insertBefore(tabEl, currentAddBtn);
+
+            // Content
+            const contentEl = document.createElement('div');
+            contentEl.id = `content-${tabId}`;
+            contentEl.className = 'tab-content';
+            
+            const containerDiv = document.createElement('div');
+            containerDiv.className = 'p-8 flex flex-col h-full';
+
+            const titleWrapper = document.createElement('div');
+            titleWrapper.className = 'flex items-center gap-3 mb-6 group cursor-pointer w-fit hover:bg-gray-50 p-2 px-4 rounded-lg transition-all border border-transparent hover:border-gray-200';
+            titleWrapper.title = "Clic para editar nombre";
+
+            const titleH3 = document.createElement('h3');
+            titleH3.className = 'text-3xl font-light text-gray-400 group-hover:text-gray-600 transition-colors select-none';
+            titleH3.textContent = tabTitle;
+
+            const editIconDiv = document.createElement('div');
+            editIconDiv.className = 'text-gray-400 opacity-0 group-hover:opacity-100 transition-all transform translate-y-1 group-hover:translate-y-0';
+            editIconDiv.innerHTML = '<i data-lucide="edit-3" class="w-5 h-5"></i>';
+
+            titleWrapper.appendChild(titleH3);
+            titleWrapper.appendChild(editIconDiv);
+
+            titleWrapper.onclick = (e) => {
+                e.stopPropagation();
+                const currentData = findTab(tabId);
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.value = currentData.title;
+                input.className = 'text-3xl font-light text-gray-700 text-center bg-transparent border-b-2 border-blue-500 outline-none min-w-[240px] mb-6 pb-1';
+                
+                const save = () => {
+                    const newName = input.value.trim() || currentData.title;
+                    titleH3.textContent = newName;
+                    const tabSpan = document.querySelector(`.chrome-tab[data-id="${tabId}"] span`);
+                    if(tabSpan) tabSpan.textContent = newName;
+                    
+                    input.replaceWith(titleWrapper);
+                    updateTab(tabId, { title: newName }); 
+                };
+
+                input.onblur = save;
+                input.onkeydown = (ev) => { if (ev.key === 'Enter') save(); };
+
+                titleWrapper.replaceWith(input);
+                input.focus();
+                input.select();
+            };
+
+            const editorBoxHTML = `
+                <div class="flex-1 w-full relative card-box border border-solid border-gray-200 rounded-lg bg-white shadow-sm overflow-hidden">
+                    <div class="absolute top-3 right-3 z-20 flex gap-2">
+                        <button class="copy-btn p-2 rounded-full bg-white shadow hover:bg-gray-100 text-gray-600 transition-all" title="Copiar texto limpio">
+                            <i data-lucide="copy" class="w-4 h-4"></i>
+                        </button>
+                        <button class="toggle-mode p-2 rounded-full bg-white shadow hover:bg-gray-100 text-gray-600 transition-all" title="Cambiar Vista/Edición">
+                            <i data-lucide="edit-2" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                    <div class="edit-container hidden w-full h-full p-6 flex flex-col">
+                        <div class="mb-2 text-xs font-semibold text-gray-400">MODO EDICIÓN</div>
+                        <div class="editor-container flex-1 relative">
+                            <div class="editor-backdrop"></div>
+                            <textarea class="editor-textarea" placeholder="Usa {COLUMNA}...">${initialContent}</textarea>
+                        </div>
+                    </div>
+                    <div class="view-container w-full h-full p-6 flex flex-col bg-white">
+                        <div class="mb-2 text-xs font-semibold text-blue-500">VISTA PREVIA</div>
+                        <div class="view-content flex-1 overflow-auto prose text-sm select-text"></div>
+                    </div>
+                </div>`;
+            
+            const editorWrapper = document.createElement('div');
+            editorWrapper.className = 'flex flex-col flex-1 w-full h-full'; 
+            editorWrapper.innerHTML = editorBoxHTML;
+
+            containerDiv.appendChild(titleWrapper);
+            containerDiv.appendChild(editorWrapper);
+            contentEl.appendChild(containerDiv);
+            
+            const textarea = contentEl.querySelector('textarea');
+            const backdrop = contentEl.querySelector('.editor-backdrop');
+            const toggleBtn = contentEl.querySelector('.toggle-mode');
+            const copyBtn = contentEl.querySelector('.copy-btn');
+            const editCont = contentEl.querySelector('.edit-container');
+            const viewCont = contentEl.querySelector('.view-container');
+            const viewContent = contentEl.querySelector('.view-content');
+            const cardBox = contentEl.querySelector('.card-box');
+
+            const highlight = (txt) => {
+                let html = txt.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                return html.replace(/\{([^{}]+)\}/g, '<span class="highlight-mark">{$1}</span>') + (txt.endsWith('\n') ? '<br>&nbsp;' : '');
+            };
+            
+            // Init highlights for edit mode
+            backdrop.innerHTML = highlight(initialContent);
+
+            textarea.oninput = () => { 
+                updateTab(tabId, { content: textarea.value }); 
+                backdrop.innerHTML = highlight(textarea.value); 
+                triggerAutoSave();
+            };
+            textarea.onscroll = () => { backdrop.scrollTop = textarea.scrollTop; };
+
+            // COPY LOGIC
+            copyBtn.onclick = () => {
+                // Get fresh raw text with substitutions but no HTML tags
+                const rawText = textarea.value.replace(/\{([^{}]+)\}/g, (m, k) => {
+                    const key = k.trim();
+                    if (globalSelectedData && globalSelectedData[key] !== undefined) {
+                        return globalSelectedData[key];
+                    }
+                    return m; // Keep placeholder if no data
+                });
+                
+                // Clean up: collapse multiple spaces/newlines to single space, trim
+                let cleanText = rawText.replace(/\s+/g, ' ').trim();
+                
+                // Capitalize first letter
+                if (cleanText.length > 0) {
+                    cleanText = cleanText.charAt(0).toUpperCase() + cleanText.slice(1);
+                }
+                
+                // Create temp textarea
+                const temp = document.createElement('textarea');
+                temp.value = cleanText;
+                document.body.appendChild(temp);
+                temp.select();
+                try {
+                    document.execCommand('copy');
+                    // Visual feedback
+                    copyBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4 text-green-600"></i>';
+                    setTimeout(() => {
+                        copyBtn.innerHTML = '<i data-lucide="copy" class="w-4 h-4"></i>';
+                        lucide.createIcons();
+                    }, 1500);
+                } catch(err) {
+                    alert('Error al copiar');
+                }
+                document.body.removeChild(temp);
+                lucide.createIcons();
+            };
+
+            // Initial Render for View Mode
+            const initialRender = processTemplate(initialContent);
+            viewContent.innerHTML = initialRender.html.replace(/\n/g, '<br>');
+            if(initialRender.error) {
+                cardBox.classList.remove('bg-white', 'border-gray-200');
+                cardBox.classList.add('bg-red-50', 'border-red-200');
+            }
+
+            let isEdit = false; // Default to View Mode
+            toggleBtn.onclick = () => {
+                isEdit = !isEdit;
+                if(isEdit) {
+                    editCont.classList.remove('hidden'); viewCont.classList.add('hidden');
+                    cardBox.className = "flex-1 w-full relative card-box border-2 border-dashed border-gray-300 rounded-lg bg-gray-50 overflow-hidden";
+                    toggleBtn.innerHTML = '<i data-lucide="eye" class="w-4 h-4"></i>';
+                } else {
+                    editCont.classList.add('hidden'); viewCont.classList.remove('hidden');
+                    cardBox.className = "flex-1 w-full relative card-box border border-solid border-gray-200 rounded-lg bg-white shadow-sm overflow-hidden";
+                    
+                    const res = processTemplate(textarea.value);
+                    viewContent.innerHTML = res.html.replace(/\n/g, '<br>');
+                    if(res.error) {
+                        cardBox.classList.remove('bg-white', 'border-gray-200');
+                        cardBox.classList.add('bg-red-50', 'border-red-200');
+                    } else {
+                        cardBox.classList.remove('bg-red-50', 'border-red-200');
+                        cardBox.classList.add('bg-white', 'border-gray-200');
+                    }
+                    toggleBtn.innerHTML = '<i data-lucide="edit-2" class="w-4 h-4"></i>';
+                }
+                lucide.createIcons();
+            };
+
+            contentArea.appendChild(contentEl);
+            activateTab(tabId);
+            lucide.createIcons();
+            contentEl.updateView = () => { 
+                if(!isEdit) { // If in view mode, force update
+                    const res = processTemplate(textarea.value);
+                    viewContent.innerHTML = res.html.replace(/\n/g, '<br>');
+                    if(res.error) {
+                        cardBox.classList.remove('bg-white', 'border-gray-200');
+                        cardBox.classList.add('bg-red-50', 'border-red-200');
+                    } else {
+                        cardBox.classList.remove('bg-red-50', 'border-red-200');
+                        cardBox.classList.add('bg-white', 'border-gray-200');
+                    }
+                }
+            }; 
+        }
+
+        function renderSheetTabs(names) {
+            const c = document.getElementById('sheet-tabs'); c.innerHTML = '';
+            names.forEach((n,i) => {
+                const b = document.createElement('button'); b.className = `sheet-tab ${i===0?'active':''}`; b.textContent = n;
+                b.onclick = () => { renderSheet(n); document.querySelectorAll('.sheet-tab').forEach(x=>x.classList.remove('active')); b.classList.add('active'); };
+                c.appendChild(b);
+            });
+        }
+        function renderSheet(name) {
+            const ws = currentWorkbook.Sheets[name];
+            const json = XLSX.utils.sheet_to_json(ws, {header:1, defval:""});
+            currentSheetJson = json;
+            globalHeaders = json[0] ? json[0].map(x=>String(x).trim()) : [];
+            let html = '<table class="excel-table"><thead><tr><th></th>' + globalHeaders.map((h,i)=>`<th>${getColumnLabel(i)}</th>`).join('') + '</tr></thead><tbody>';
+            json.forEach((r,i) => { html += `<tr data-idx="${i}" onclick="selectRow(this, ${i})"><td>${i+1}</td>` + r.map(c => `<td>${c??''}</td>`).join('') + '</tr>'; });
+            document.getElementById('grid-wrapper').innerHTML = html + '</tbody></table>';
+        }
+        function getColumnLabel(i) { return (i>=26 ? getColumnLabel(Math.floor(i/26)-1) : '') + String.fromCharCode(65+i%26); }
+
+        function selectRow(tr, idx) {
+            if(idx===0) return;
+            document.querySelectorAll('tr.selected-row').forEach(x=>x.classList.remove('selected-row'));
+            tr.classList.add('selected-row');
+            globalSelectedData = {};
+            currentSheetJson[idx].forEach((v,i) => { if(globalHeaders[i]) globalSelectedData[globalHeaders[i]] = v; });
+            
+            // Update active tab logic
+            const activeContent = document.querySelector('.tab-content.active');
+            if(activeContent && activeContent.updateView) {
+                activeContent.updateView();
+            }
+        }
+
+        function processTemplate(text) {
+            let error = false;
+            // IMPORTANT: SINGLE LINE RETURNS FOR TEMPLATE LITERALS TO AVOID NEWLINES IN HTML
+            const html = text.replace(/\{([^{}]+)\}/g, (m, k) => {
+                const key = k.trim();
+                
+                // ERROR CHIP (Red)
+                if (!globalHeaders.includes(key)) { 
+                    error = true; 
+                    return `<span class="inline-flex items-center mx-0.5 px-1.5 border border-red-200 bg-red-50 rounded text-sm font-medium text-red-800 select-text whitespace-nowrap"><span class="line-through decoration-red-400 mr-1">${key}</span><i data-lucide="alert-circle" class="w-3 h-3 text-red-500"></i></span>`;
+                }
+                
+                // WARNING CHIP (Orange) - Field empty but row selected
+                if (globalSelectedData && (globalSelectedData[key] === "" || globalSelectedData[key] === null || globalSelectedData[key] === undefined)) {
+                    return `<span class="inline-flex items-center mx-0.5 px-1.5 border border-orange-200 bg-orange-50 rounded text-sm font-medium text-orange-800 select-text whitespace-nowrap" title="Campo vacío"><span class="mr-1">${key}</span><i data-lucide="triangle-alert" class="w-3 h-3 text-orange-500"></i></span>`;
+                }
+                
+                let val = "";
+                let type = "TEXTO";
+                let icon = "type";
+                let colorClass = "bg-yellow-100 border-yellow-200 text-gray-800";
+                
+                if (globalSelectedData && globalSelectedData[key] !== undefined) {
+                    val = String(globalSelectedData[key]); 
+                    if (!isNaN(parseFloat(val)) && isFinite(val)) { type = "NÚMERO"; icon = "hash"; } 
+                    else if (val.match(/^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/) || val.match(/^\d{4}[\/-]\d{1,2}[\/-]\d{1,2}$/)) {
+                        type = "FECHA"; icon = "calendar";
+                    }
+                } else {
+                    val = key; type = "CAMPO"; icon = "columns"; colorClass = "bg-blue-50 border-blue-200 text-blue-600";
+                }
+
+                // SMART CHIP (Yellow/Blue)
+                return `<span class="inline-flex items-center mx-0.5 px-1.5 border rounded text-sm font-medium select-text whitespace-nowrap ${colorClass}"><span class="mr-1">${val}</span><i data-lucide="${icon}" class="w-3 h-3 opacity-60"></i></span>`;
+            });
+            
+            setTimeout(() => lucide.createIcons(), 0);
+            return { html, error };
+        }
+
+        function activateTab(id) {
+            document.querySelectorAll('.chrome-tab').forEach(x=>x.classList.remove('active'));
+            document.querySelector(`.chrome-tab[data-id="${id}"]`)?.classList.add('active');
+            document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));
+            const c = document.getElementById(`content-${id}`);
+            if(c) {
+                c.classList.add('active');
+                // Force update view when entering tab
+                if (c.updateView) c.updateView();
+            }
+            document.getElementById('no-tabs-state').classList.add('hidden');
+        }
+
+        /* --- STORAGE & LOAD FIXES --- */
+        function setStatus(status, text='') {
+            const container = document.getElementById('status-icon');
+            document.getElementById('status-text').textContent = text;
+            if(status === 'saving') container.innerHTML = '<i data-lucide="loader-2" class="animate-spin text-blue-400"></i>';
+            else if(status === 'saved') container.innerHTML = '<i data-lucide="check" class="text-blue-400"></i>';
+            else if(status === 'error') container.innerHTML = '<i data-lucide="alert-circle" class="text-red-400"></i>';
+            else container.innerHTML = '<i data-lucide="check" class="text-blue-400"></i>';
+            lucide.createIcons();
+        }
+
+        function triggerAutoSave() {
+            setStatus('saving', 'Guardando...');
+            clearTimeout(autoSaveTimer);
+            autoSaveTimer = setTimeout(() => performSave(), 1500);
+        }
+
+        function performSave() {
+             try {
+                const json = JSON.stringify(projectData);
+                localStorage.setItem(STORAGE_KEY, json);
+                setStatus('saved', 'Guardado');
+                return true;
+            } catch (e) {
+                if (e.name === 'QuotaExceededError') {
+                    const stripped = { ...projectData, excelBase64: null };
+                    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(stripped)); setStatus('error', 'Sin Excel (Full)'); return true; } 
+                    catch (e2) { setStatus('error', 'Memoria Llena'); return false; }
+                } 
+                setStatus('error', 'Error'); return false;
+            }
+        }
+
+        function saveProjectToBrowser(btnElement) {
+            if(btnElement) {
+                const iconContainer = btnElement.querySelector('.icon-container');
+                const originalIcon = iconContainer.innerHTML;
+                iconContainer.innerHTML = '<i data-lucide="loader-2" class="animate-spin w-5 h-5"></i>';
+                lucide.createIcons();
+                setTimeout(() => {
+                    if(performSave()) {
+                        iconContainer.innerHTML = '<i data-lucide="check" class="w-5 h-5"></i>';
+                        iconContainer.classList.replace('bg-blue-100', 'bg-green-100');
+                        iconContainer.classList.replace('text-blue-600', 'text-green-600');
+                        lucide.createIcons();
+                        setTimeout(() => { closeModals(); iconContainer.innerHTML=originalIcon; iconContainer.classList.replace('bg-green-100','bg-blue-100'); iconContainer.classList.replace('text-green-600','text-blue-600'); lucide.createIcons(); }, 1000);
+                    } else { iconContainer.innerHTML = originalIcon; lucide.createIcons(); }
+                }, 800);
+            } else performSave();
+        }
+
+        function createNewProject() {
+            performSave(); // Autosave old
+            projectData = { id: 'default', tabs: [], excelBase64: null, excelFileName: null };
+            currentWorkbook = null; currentSheetJson = []; globalSelectedData = null; globalHeaders = [];
+            
+            // Wipe UI
+            document.getElementById('grid-wrapper').classList.add('hidden');
+            document.getElementById('empty-state').classList.remove('hidden');
+            document.getElementById('sheet-tabs').classList.add('hidden');
+            document.getElementById('file-name').textContent = '';
+            
+            document.querySelectorAll('.chrome-tab').forEach(t => t.remove());
+            document.querySelectorAll('.tab-content').forEach(c => c.remove());
+            
+            // Refresh Add Button Binding
+            document.getElementById('chrome-tabs-container').innerHTML = '<div class="add-tab-btn" id="add-tab-btn" title="Nueva pestaña"><i data-lucide="plus" class="w-5 h-5"></i></div>';
+            document.getElementById('add-tab-btn').onclick = () => createNewTab();
+            
+            document.getElementById('no-tabs-state').classList.remove('hidden');
+            tabCounter = 1;
+            closeModals();
+            setStatus('saved', 'Nuevo');
+            lucide.createIcons();
+        }
+
+        function saveProjectToPC() {
+            const blob = new Blob([JSON.stringify(projectData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `proyecto_${new Date().toISOString().slice(0,10)}.slpwtv`;
+            a.click(); URL.revokeObjectURL(url); closeModals();
+        }
+
+        function loadProjectFromBrowser() {
+            const json = localStorage.getItem(STORAGE_KEY);
+            if (!json) { alert('No hay guardado automático.'); return; }
+            loadProjectJSON(json); closeModals();
+        }
+
+        function loadProjectFromPC(input) {
+            const file = input.files[0];
+            if(!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => { loadProjectJSON(e.target.result); closeModals(); };
+            reader.readAsText(file);
+        }
+
+        function loadProjectJSON(jsonString) {
+            try {
+                if (!jsonString) throw new Error("Vacío");
+                const data = JSON.parse(jsonString);
+                if (!data || typeof data !== 'object') throw new Error("Formato incorrecto");
+
+                projectData = { 
+                    id: data.id || 'p_'+Date.now(), 
+                    tabs: Array.isArray(data.tabs) ? data.tabs : [], 
+                    excelBase64: data.excelBase64, 
+                    excelFileName: data.excelFileName 
+                };
+
+                // CRITICAL: Wipe and Rebuild Add Button properly
+                document.querySelectorAll('.chrome-tab').forEach(t => t.remove());
+                document.querySelectorAll('.tab-content').forEach(c => c.remove());
+                document.getElementById('chrome-tabs-container').innerHTML = '<div class="add-tab-btn" id="add-tab-btn" title="Nueva pestaña"><i data-lucide="plus" class="w-5 h-5"></i></div>';
+                document.getElementById('add-tab-btn').onclick = () => createNewTab(); // Re-bind click
+                document.getElementById('no-tabs-state').classList.remove('hidden');
+                
+                // Now create tabs using the NEW button in DOM
+                if(projectData.tabs.length > 0) {
+                    projectData.tabs.forEach(tab => createNewTab(tab));
+                    document.getElementById('no-tabs-state').classList.add('hidden');
+                    
+                    // Activate first tab
+                    activateTab(projectData.tabs[0].id);
+                }
+
+                if (projectData.excelBase64) {
+                    try {
+                        const binary = atob(projectData.excelBase64);
+                        const bytes = new Uint8Array(binary.length);
+                        for(let i=0; i<binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                        document.getElementById('file-name').textContent = projectData.excelFileName || "Recuperado";
+                        processExcelData(bytes);
+                    } catch(err) { console.error(err); setStatus('error', 'Excel Error'); }
+                } else {
+                    document.getElementById('empty-state').classList.remove('hidden');
+                    document.getElementById('grid-wrapper').classList.add('hidden');
+                }
+                setStatus('saved', 'Cargado');
+                lucide.createIcons();
+            } catch (e) {
+                console.error("Load Error:", e);
+                alert('Error al cargar proyecto: ' + e.message);
+                createNewProject(); // Fallback reset
+            }
+        }
+
+        function openNewProjectModal() { document.getElementById('modal-new').classList.add('open'); }
+        function openSaveModal() { document.getElementById('modal-save').classList.add('open'); }
+        function openLoadModal() { 
+            document.getElementById('browser-save-info').textContent = localStorage.getItem(STORAGE_KEY) ? 'Disponible' : 'No encontrado';
+            document.getElementById('modal-load').classList.add('open'); 
+        }
+        function closeModals() { document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('open')); }
+
+        // AUTO-LOAD ON START
+        const savedData = localStorage.getItem(STORAGE_KEY);
+        if(savedData) {
+            loadProjectJSON(savedData);
+        } else {
+            // Optional: Start with 1 empty tab if fresh
+            // createNewTab(); 
+        }
+
+        lucide.createIcons();
+    </script>
+</body>
+</html>
